@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Fruit Target Shooter</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+    body {
+      background: radial-gradient(circle, #1a2a6c, #b21f1f, #fdbb2d);
+      overflow: hidden;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      cursor: crosshair;
+    }
+    #gameCanvas {
+      background: rgba(15, 23, 42, 0.75);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+      border-radius: 12px;
+      touch-action: none;
+    }
+    #ui {
+      position: absolute;
+      top: 20px;
+      width: 100%;
+      max-width: 800px;
+      display: flex;
+      justify-content: space-between;
+      padding: 0 30px;
+      pointer-events: none;
+      color: #fff;
+      font-size: 22px;
+      font-weight: bold;
+      text-shadow: 2px 2px 4px #000;
+    }
+    #gameOverScreen {
+      position: absolute;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.85);
+      padding: 40px;
+      border-radius: 16px;
+      color: white;
+      text-align: center;
+      box-shadow: 0 0 25px rgba(255, 75, 75, 0.6);
+    }
+    #gameOverScreen h1 {
+      font-size: 44px;
+      color: #ff4757;
+      margin-bottom: 10px;
+    }
+    #gameOverScreen p {
+      font-size: 24px;
+      margin-bottom: 25px;
+    }
+    #restartBtn {
+      padding: 12px 30px;
+      font-size: 20px;
+      font-weight: bold;
+      background: linear-gradient(45deg, #ff4757, #ff6b81);
+      color: white;
+      border: none;
+      border-radius: 30px;
+      cursor: pointer;
+      box-shadow: 0 4px 15px rgba(255, 71, 87, 0.4);
+      transition: transform 0.2s;
+    }
+    #restartBtn:hover {
+      transform: scale(1.08);
+    }
+  </style>
+</head>
+<body>
+
+  <div id="ui">
+    <div>Score: <span id="scoreVal">0</span></div>
+    <div>Lives: <span id="livesVal">❤️❤️❤️</span></div>
+  </div>
+
+  <canvas id="gameCanvas"></canvas>
+
+  <div id="gameOverScreen">
+    <h1>Game Over!</h1>
+    <p>Aapka Score: <span id="finalScore">0</span></p>
+    <button id="restartBtn">Play Again</button>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreVal = document.getElementById('scoreVal');
+    const livesVal = document.getElementById('livesVal');
+    const gameOverScreen = document.getElementById('gameOverScreen');
+    const finalScore = document.getElementById('finalScore');
+    const restartBtn = document.getElementById('restartBtn');
+
+    // Canvas size
+    function resizeCanvas() {
+      canvas.width = Math.min(window.innerWidth - 20, 800);
+      canvas.height = Math.min(window.innerHeight - 20, 600);
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    // Audio context for sound effects
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function playShootSound() {
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(450, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(80, audioCtx.currentTime + 0.12);
+      gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.12);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.12);
+    }
+
+    function playSplatterSound() {
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(180, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(30, audioCtx.currentTime + 0.2);
+      gain.gain.setValueAtTime(0.4, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.2);
+    }
+
+    let score = 0;
+    let lives = 3;
+    let isGameOver = false;
+    let fruits = [];
+    let particles = [];
+    let mouse = { x: canvas.width / 2, y: canvas.height / 2 };
+
+    const FRUIT_TYPES = [
+      { emoji: '🍎', points: 10, radius: 28, color: '#ff3838' },
+      { emoji: '🍉', points: 15, radius: 34, color: '#2ed573' },
+      { emoji: '🍊', points: 10, radius: 26, color: '#ffa502' },
+      { emoji: '🍌', points: 20, radius: 24, color: '#eccc68' },
+      { emoji: '🍍', points: 25, radius: 32, color: '#f1c40f' }
+    ];
+
+    class Fruit {
+      constructor() {
+        const type = FRUIT_TYPES[Math.floor(Math.random() * FRUIT_TYPES.length)];
+        this.emoji = type.emoji;
+        this.points = type.points;
+        this.radius = type.radius;
+        this.color = type.color;
+        this.x = Math.random() * (canvas.width - 120) + 60;
+        this.y = canvas.height + 40;
+        this.vx = (Math.random() - 0.5) * 4;
+        this.vy = -(Math.random() * 4 + 11.5);
+        this.gravity = 0.23;
+        this.rotation = 0;
+        this.rotSpeed = (Math.random() - 0.5) * 0.08;
+      }
+
+      update() {
+        this.vy += this.gravity;
+        this.x += this.vx;
+        this.y += this.vy;
+        this.rotation += this.rotSpeed;
+      }
+
+      draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.rotation);
+        ctx.font = `${this.radius * 2}px serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(this.emoji, 0, 0);
+        ctx.restore();
+      }
+    }
+
+    class Particle {
+      constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.radius = Math.random() * 5 + 2;
+        this.vx = (Math.random() - 0.5) * 9;
+        this.vy = (Math.random() - 0.5) * 9;
+        this.alpha = 1;
+        this.decay = Math.random() * 0.025 + 0.02;
+      }
+
+      update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.alpha -= this.decay;
+      }
+
+      draw() {
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, this.alpha);
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    let spawnTimer = 0;
+    function spawnFruits() {
+      spawnTimer++;
+      if (spawnTimer % 65 === 0) {
+        fruits.push(new Fruit());
+      }
+    }
+
+    function createSplatter(x, y, color) {
+      for (let i = 0; i < 20; i++) {
+        particles.push(new Particle(x, y, color));
+      }
+    }
+
+    function updateLivesUI() {
+      let hearts = '';
+      for (let i = 0; i < lives; i++) hearts += '❤️';
+      livesVal.textContent = hearts || '💀';
+    }
+
+    function shoot(targetX, targetY) {
+      if (isGameOver) return;
+      playShootSound();
+
+      let hit = false;
+      for (let i = fruits.length - 1; i >= 0; i--) {
+        const f = fruits[i];
+        const dist = Math.hypot(targetX - f.x, targetY - f.y);
+        if (dist <= f.radius * 1.2) {
+          createSplatter(f.x, f.y, f.color);
+          score += f.points;
+          scoreVal.textContent = score;
+          playSplatterSound();
+          fruits.splice(i, 1);
+          hit = true;
+          break;
+        }
+      }
+    }
+
+    // Crosshair rendering
+    function drawCrosshair() {
+      ctx.save();
+      ctx.strokeStyle = '#00f2fe';
+      ctx.lineWidth = 2;
+
+      // Circle
+      ctx.beginPath();
+      ctx.arc(mouse.x, mouse.y, 16, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Cross lines
+      ctx.beginPath();
+      ctx.moveTo(mouse.x - 22, mouse.y);
+      ctx.lineTo(mouse.x + 22, mouse.y);
+      ctx.moveTo(mouse.x, mouse.y - 22);
+      ctx.lineTo(mouse.x, mouse.y + 22);
+      ctx.stroke();
+
+      // Center dot
+      ctx.fillStyle = '#ff4757';
+      ctx.beginPath();
+      ctx.arc(mouse.x, mouse.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    // Main Game Loop
+    function loop() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (!isGameOver) {
+        spawnFruits();
+
+        // Update Fruits
+        for (let i = fruits.length - 1; i >= 0; i--) {
+          const f = fruits[i];
+          f.update();
+          f.draw();
+
+          // Fruit fell off screen without being shot
+          if (f.y > canvas.height + 60 && f.vy > 0) {
+            fruits.splice(i, 1);
+            lives--;
+            updateLivesUI();
+            if (lives <= 0) {
+              endGame();
+            }
+          }
+        }
+      }
+
+      // Update Particles
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.update();
+        p.draw();
+        if (p.alpha <= 0) particles.splice(i, 1);
+      }
+
+      drawCrosshair();
+
+      if (!isGameOver) {
+        requestAnimationFrame(loop);
+      }
+    }
+
+    function endGame() {
+      isGameOver = true;
+      finalScore.textContent = score;
+      gameOverScreen.style.display = 'flex';
+    }
+
+    function restartGame() {
+      score = 0;
+      lives = 3;
+      fruits = [];
+      particles = [];
+      isGameOver = false;
+      scoreVal.textContent = score;
+      updateLivesUI();
+      gameOverScreen.style.display = 'none';
+      loop();
+    }
+
+    // Event Listeners
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      mouse.x = e.clientX - rect.left;
+      mouse.y = e.clientY - rect.top;
+    });
+
+    canvas.addEventListener('mousedown', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      shoot(e.clientX - rect.left, e.clientY - rect.top);
+    });
+
+    canvas.addEventListener('touchstart', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const touch = e.touches[0];
+      mouse.x = touch.clientX - rect.left;
+      mouse.y = touch.clientY - rect.top;
+      shoot(mouse.x, mouse.y);
+      e.preventDefault();
+    }, { passive: false });
+
+    restartBtn.addEventListener('click', restartGame);
+
+    // Start Loop
+    loop();
+  </script>
+</body>
+</html>
